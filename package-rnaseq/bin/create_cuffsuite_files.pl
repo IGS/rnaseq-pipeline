@@ -369,6 +369,7 @@ elsif ( $hCmdLineOption{'cuff_prog'} =~ m/^cuffquant$/i) {
 	
 	open($fpLST, ">$sOutDir/cuffsuite_input_file.list") or die "Error! Cannot open $sOutDir/cuffsuite_input_file.list for writing: $!";
 	
+    my %seen_groups = ();
 	# For each comparison group...
 	foreach $sCGrp (@aComparisons) {
 		($bDebug || $bVerbose) ? 
@@ -393,13 +394,20 @@ elsif ( $hCmdLineOption{'cuff_prog'} =~ m/^cuffquant$/i) {
 		# Split the group into both parts, get the files for both parts, and write to output list.
 		($sGrpX, $sGrpY) = split(/vs/, $sCGrp);
 		
-		foreach $sSampleName (sort @{$hGroups{$sGrpY}}) {
-			print $fpLST "$hSamples{$sSampleName}[1]\t$sGTFFile\n";
-		}
+        # Only print group information if group was seen
+        unless (defined $seen_groups{$sGrpY}){
+            foreach $sSampleName (sort @{$hGroups{$sGrpY}}) {
+                print $fpLST "$hSamples{$sSampleName}[1]\t$sGTFFile\n";
+            }
+            $seen_groups{$sGrpY} = 1;
+        }
 		
-		foreach $sSampleName (sort @{$hGroups{$sGrpX}}) {
-			print $fpLST "$hSamples{$sSampleName}[1]\t$sGTFFile\n";
-		}
+        unless (defined $seen_groups{$sGrpX}){
+            foreach $sSampleName (sort @{$hGroups{$sGrpX}}) {
+                print $fpLST "$hSamples{$sSampleName}[1]\t$sGTFFile\n";
+            }
+            $seen_groups{$sGrpX} = 1;
+        }
 	}
 	
 	close($fpLST);
