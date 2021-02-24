@@ -65,6 +65,7 @@ The script executes the htseq-count (count.py python) script from the htseq pyth
 ################################################################################
 
 use strict;
+use warnings;
 
 use Getopt::Long qw(:config no_ignore_case no_auto_abbrev pass_through);
 use Pod::Usage;
@@ -77,8 +78,8 @@ use File::Spec;
 use constant FALSE => 0;
 use constant TRUE  => 1;
 
-use constant PYTHON_BIN_DIR => '/usr/bin';
-use constant PYTHON_LIB_DIR => '/usr/lib/python2.7';
+use constant PYTHON_BIN_DIR => '/usr/local/packages/python-2.7.14/bin';
+use constant PYTHON_LIB_DIR => '/usr/local/packages/python-2.7.14/lib';
 
 use constant VERSION => '1.0.0';
 use constant PROGRAM => eval { ($0 =~ m/(\w+\.pl)$/) ? $1 : $0 };
@@ -138,7 +139,11 @@ $sOutFile .= ".".$hCmdLineOption{'type'}.".counts";
 ($bDebug || $bVerbose) ? 
 	print STDERR "\nGenerating $hCmdLineOption{'type'} counts for $hCmdLineOption{'infile'} ...\n" : ();
 
-$sCmd  = $hCmdLineOption{'python_bin_dir'}."/python -m HTSeq.scripts.count".
+# SAdkins - test for getting HTSeq module detected on RHEL7
+#my $pythonpath = 'PYTHONPATH=$PYTHONPATH'.$hCmdLineOption{'python_bin_dir'};
+
+#$sCmd  =  $pythonpath . " " . $hCmdLineOption{'python_bin_dir'}."/python -m HTSeq.scripts.count".
+$sCmd  =   $hCmdLineOption{'python_bin_dir'}."/python -m HTSeq.scripts.count".
 		 " -m ".$hCmdLineOption{'mode'}.
 		 " -t ".$hCmdLineOption{'type'}.
 		 " -i ".$hCmdLineOption{'idattr'}.
