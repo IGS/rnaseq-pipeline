@@ -92,6 +92,7 @@ if( defined $options{ 'map_file' } ) {
 
 
 $summary_all = $options{output_dir}."/".$options{project_name}."_summary.txt";
+#print "$summary_all";
 open($SA, ">", $summary_all) or die "Error Cannot open the summary output file";
 print $SA "FDR\tP.value\tReadCountPercentile\tLFC(UP)\tLFC(DOWN)\tSample\tUP\tDOWN\tTotal\n";
 
@@ -247,7 +248,7 @@ foreach $file (@results_files) {
 }
 
 close $SA ;
-
+#print "$SA";
 foreach (keys %outfiles) {
    foreach $i (@{$outfiles{$_}}) {
       $p = 0;
@@ -264,7 +265,7 @@ foreach (keys %outfiles) {
       next if (! -e $i);
       $cmd = "head -1 ".$i." >".$options{output_dir}."/temp.txt";
       exec_command($cmd);
-      $cmd = "sed -n \'2,\$p\' ".$i."| sort -k6 -g -r >>". $options{output_dir}."/temp.txt";
+      $cmd = "sed -n \'2,\$p\' ".$i."| sort -k5 -g -r >>". $options{output_dir}."/temp.txt";
       exec_command($cmd);
       $cmd = "mv ".$options{output_dir}."/temp.txt ".$i; 
       exec_command($cmd);
@@ -295,7 +296,7 @@ sub find_up_or_down_regulated {
 	my $i;
 	my $l = 2;
 	my $data_out = "";
-   
+    #print "$$vals[$i]";
 
 	if (exists $options{'map_file'}) {
 	    $l = 4;
@@ -312,12 +313,12 @@ sub find_up_or_down_regulated {
 	}
 	$data_out.= "\n";
 	
-	if( $$vals[8] ) {
+	if( $$vals[9] ) {
 	    print $total_out $data_out;
 	    $$up_reg ++;
 	} 
 
-	elsif( $$vals[5] >= $param->{'UFC'} ) {
+	elsif( $$vals[4] >= $param->{'UFC'} ) {
 	    print $total_out $data_out;
 	    $$up_reg ++;
 	}
@@ -325,7 +326,7 @@ sub find_up_or_down_regulated {
 	    print $total_out $data_out;	
 	    $$down_reg ++;
 	} 
-	elsif( $$vals[5] <= $param->{'DFC'} ) {
+	elsif( $$vals[4] <= $param->{'DFC'} ) {
 	    print  $total_out $data_out;
 	    $$down_reg ++;
 	}
@@ -341,16 +342,15 @@ sub run_filter_checks {
 	my $param = shift;
 	my $filtered = 0;
 	my $nMax = 0;
-
-
-        # FDR cutoff not satisfied
+    #print "$vals[0]";    
+    # FDR cutoff not satisfied
 	if (exists $param->{'FDR'}) {
-	    if( $param->{'FDR'} != 0 && $$vals[7] > $param->{'FDR'} ) {
+	    if( $param->{'FDR'} != 0 && $$vals[8] > $param->{'FDR'} ) {
 		$filtered = 1;
 	    }
 	}
 	if (exists $param->{'P'}) {
-	    if ($$vals[6] > $param->{'P'} ) {
+	    if ($$vals[7] > $param->{'P'} ) {
 		$filtered = 1;
 	    }
 	}

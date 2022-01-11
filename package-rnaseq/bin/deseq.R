@@ -5,6 +5,7 @@
 #
 # tcreasy@som.umaryland.edu 
 # modified by thodges@som.umaryland.edu to use DESeq2v1.18 instead of DESeq 
+#modified by Apaala Chatterjee to use in pipeline
 ###############################################################################
 
 ##
@@ -76,7 +77,9 @@ rownames(d) <- data.tab$ID
 
 # condition information from sample info file
 condition <- factor(as.character(sample.info[,2]))
-
+#condition=sort(condition, decreasing=T)
+print("Condition printed")
+print(condition)
 # setup colData for creating DESeqData object
 colData <- data.frame(row.names = colnames(d), condition)
 
@@ -136,13 +139,13 @@ for (k in 1:(length(pheno)-1)) {
 	for (m in (k+1):length(pheno)) {
 		
 	cat(paste("\n* Running DESeq2 algorithm for: ", pheno[k], " vs ", pheno[m], "\n", sep=""))
-				
+    #print(type(k))				
 	# To get results
-	res <- results(dds)
-		
+	res <- results(dds, contrast=c("condition",pheno[k] ,pheno[m]),cooksCutoff=FALSE)
+
 	#Results object
 	#Note: I need to discuss further with Amol about the independentFiltering parameter
-    res <- results(dds, independentFiltering=FALSE)
+    res <- results(dds, independentFiltering=FALSE, contrast=c("condition",pheno[k] , pheno[m]),cooksCutoff=FALSE)
     	    
     #Information on results dataframe
     mcols(res, use.names =T)
@@ -184,7 +187,8 @@ for (k in 1:(length(pheno)-1)) {
     resdata <- resdata[order(-abs(resdata$log2FoldChange)),]
     sig.genes = resdata[!is.na(resdata$padj<=0.05),]
     print(dim(sig.genes))
-
+    print("*********************")
+    print(head(sig.genes))
     if(nrow(sig.genes) < 2) {
       sig.genes <- resdata[resdata$pval<=0.05,]
       print(dim(sig.genes))
@@ -218,7 +222,7 @@ for (k in 1:(length(pheno)-1)) {
     
     cat("\n* Results Snippet: read.counts.2\n")
     print(head(read.counts.sig))
-    
+    #####Changed order of k and m to indicate deseq2 calculations of condition 2 over 1
     write.table(read.counts.sig, file.path(paste(pheno[k], "_vs_", pheno[m], ".top30.counts.txt", sep="")), na="", quote=F, row.names=F, sep="\t")
     
     hmap <- read.delim(file.path(paste(pheno[k], "_vs_", pheno[m], ".top30.counts.txt", sep="")), header=T, sep="\t" )
@@ -240,8 +244,10 @@ for (k in 1:(length(pheno)-1)) {
     heatmap.2(hmap, col=hmcol, trace="none", main=sig.title, margin=c(13,13), cexRow=0.8, cexCol=0.8, keysize=1.0)
     
     # Change column names for clarity and brevity
+    # Deseq2 calculates LFC condition 2 vs 1. Renaming changed NOV 30
     colnames(resdata) <- c("Feature.ID", "Read.Count.All", paste("Read.Count.", pheno[m], sep=""), paste("Read.Count.", pheno[k], sep=""), paste("LFC(", pheno[k], "/", pheno[m], ")", sep=""),"lfcSE", "stat", "p.Value", "FDR")	
-    # write data to tsv file
+    #colnames(resdata) <- c("Feature.ID", "Read.Count.All", paste("Read.Count.", pheno[m], sep=""), paste("Read.Count.", pheno[k], sep=""), paste("LFC(", pheno[m], "/", pheno[k], ")", sep=""),"lfcSE", "stat", "p.Value", "FDR")
+    # write data to tsv file. Replaced m with k to change name.
     write.table(resdata, file.path(paste(pheno[k], "_vs_", pheno[m], ".de_genes.txt", sep="")), na="", quote=F, row.names=F, sep="\t")
 
 	}

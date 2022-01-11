@@ -17,7 +17,7 @@ create_prok_rnaseq_pipeline_config.pl - Creates the pipeline.layout and pipeline
     create_prok_rnaseq_pipeline_config.pl --s <samples_file> --c <config_file> [--r <reference_fasta>] 
                                           [--qual <quality_score_format>] [--gtf <annotation_file>] 
                                           [--build_indexes] [--quality_stats] [--quality_trimming] 
-                                          [--alignment] [--idxfile <bowtie_index>] [--visualization] 
+                                          [--alignment] [--bowtie2_build] [--bowtie2_aln] [--idxfile <bowtie_index>] [--visualization] 
                                           [--diff_gene_expr] [--comparison_groups <str>] [--count]  
                                           [--file_type <SAM|BAM>] [--sorted <position|name>] 
                                           [--td <template_directory>] [--o <outdir>] [--block] [--v] 
@@ -42,6 +42,10 @@ create_prok_rnaseq_pipeline_config.pl - Creates the pipeline.layout and pipeline
     --annotation_format               = annotation file format (gtf/gff3)
 
     --build_indexes                   = execute bowtie_build component. Requires '--r'.
+
+    --bowtie_build                   =execute bowtie2-build component to make index for bowtie2 alignment.
+
+    --bowtie_aln                     = execute bowtie2 component to generate alignment
 
     --quality_stats                  = execute fastx_quality_stats component.
 
@@ -119,6 +123,8 @@ create_prok_rnaseq_pipeline_config.pl - Creates the pipeline.layout and pipeline
     rpkm_analysis            : generates rpkm coverage analysis utilizing the alignment BAM file(s).
     htseq                    : generates the count files from the alignment SAM file(s) sorted by name.
     deseq                    : generates the differential gen expression analysis results utilizing DESeq software.
+    bowtie_build            : build index for bowtie
+    bowtie_aln              : align using bowtie
  
     There are some restrictions about which component would precede or succeed other components.
     
@@ -151,6 +157,7 @@ use constant TRUE  => 1;
 
 use constant BOWTIE_BIN_DIR => '/usr/local/bin';
 use constant SAMTOOLS_BIN_DIR => '/usr/local/bin';
+use constant BOWTIE2_BIN_DIR => '/usr/local/bin';
 
 use constant VERSION => '2.0.0';
 use constant PROGRAM => eval { ($0 =~ m/(\w+\.pl)$/) ? $1 : $0 };
@@ -160,14 +167,14 @@ use constant PROGRAM => eval { ($0 =~ m/(\w+\.pl)$/) ? $1 : $0 };
 ##############################################################################
 
 my @aComponents = ("bowtie_build", "quality_stats", "quality_trimming", "alignment", "visualization",
-				   "rpkm_analysis", "diff_gene_expr");
+				   "rpkm_analysis", "diff_gene_expr","bowtie2_build");
 my %hCmdLineOption = ();
 my $sHelpHeader = "\nThis is ".PROGRAM." version ".VERSION."\n";
 
 GetOptions( \%hCmdLineOption,
 			'sample_file|s=s', 'config_file|c=s', 'reffile|r=s', 'quality|qual=i', 'gtffile|gtf=s',
 			'build_indexes', 'quality_stats', 'quality_trimming', 'alignment', 'idxfile=s', 
-			'visualization', 'rpkm_analysis', 'annotation_format=s', 
+			'visualization', 'rpkm_analysis', 'annotation_format=s','bowtie_build','bowtie_aln', 
 			'diff_gene_expr', 'comparison_groups=s', 'count', 'file_type=s', 'sorted=s', 
 			'repository_root|rr=s', 'ergatis_ini|ei=s', 
 			'outdir|o=s', 'template_dir|td=s',
@@ -186,7 +193,7 @@ check_parameters(\%hCmdLineOption, \@aComponents);
 my (%hConfig, %hParams, %hGroups);
 my ($sOutDir, $sTemplateDir);
 my ($sPLayout, $sPConfig);
-my ($sBwtIndexDir, $sBwtIndexPrefix);
+my ($sBwtIndexDir, $sBwtIndexPrefix,$sBwt2IndexDir, $sBwt2IndexPrefix);
 my ($fpPL, $fpPC, $fpLST1, $fpLST2, $fpLST, $fpSMPL);
 my ($sSampleName, $sGroupName, $sRead1File, $sRead2File, @aReadFiles, $sList);
 my ($sSamRefFile, $sBamFileList, $sSamFileList, $sBamNameSortList, $sMapStatsList, $sCountsFileList, $Deseq_List,  $edgeR_List, $sRpkmFileList);
@@ -239,7 +246,8 @@ read_config(\%hCmdLineOption, \%hConfig);
 ($bDebug || $bVerbose) ? print STDERR "\nProcessing $hCmdLineOption{'sample_file'} .....\n" : undef;
 if ((defined $hCmdLineOption{'quality_stats'}) || 
 	(defined $hCmdLineOption{'quality_trimming'}) || 
-	(defined $hCmdLineOption{'alignment'})) {
+	(defined $hCmdLineOption{'alignment'})||
+    (defined $hCmdLineOption{'bowtie_aln'})) {
 	
 	if (! -e "$sOutDir/raw_reads") {
 		mkdir("$sOutDir/raw_reads") ||
@@ -275,8 +283,9 @@ if ((defined $hCmdLineOption{'quality_stats'}) ||
 				$bGZ = TRUE;
 			}
 			$sCmd = "ln -s $aReadFiles[$nI] $sFile";
-			($bDebug) ? print STDERR "$sCmd\n" : undef;
-			exec_command($sCmd);
+            ($bDebug) ? print STDERR "$sCmd\n" : undef;
+		    print("R1 $bGZ \n");
+        	exec_command($sCmd);
 			($bDebug) ? print STDERR "\n" : undef;
 			
 			$sList .= (($sList =~ m/^$/) ? "$sFile" : ",$sFile");
@@ -300,6 +309,7 @@ if ((defined $hCmdLineOption{'quality_stats'}) ||
 					$sFile .= ".gz";
 					$bGZ = TRUE;
 				}
+                print("R2 $bGZ \n");
 				$sCmd = "ln -s $aReadFiles[$nI] $sFile";
 				($bDebug) ? print STDERR "$sCmd\n" : undef;
 				exec_command($sCmd);
@@ -499,29 +509,55 @@ init_pipeline_layout($oPL);
 if (defined $hCmdLineOption{'build_indexes'}) {
 	die "Error! Reference FastA file undefined !!!\n" if (!(defined $hCmdLineOption{'reffile'}));
 	
-	if (defined ($hConfig{'bowtie_build'}{'BOWTIE_INDEX_PREFIX'})) {
-		$sBwtIndexPrefix = $hConfig{'bowtie_build'}{'BOWTIE_INDEX_PREFIX'}[0];
+	if (defined ($hConfig{'bowtie2_build'}{'BOWTIE2_INDEX_PREFIX'})) {
+		$sBwtIndexPrefix = $hConfig{'bowtie2_build'}{'BOWTIE2_INDEX_PREFIX'}[0];
 	}
 	else {
 		($_, $_, $sBwtIndexPrefix) = File::Spec->splitpath($hCmdLineOption{'reffile'});
 		$sBwtIndexPrefix =~ s/.(\w+)$//;
-		$hConfig{'bowtie_build'}{'BOWTIE_INDEX_PREFIX'}[0] = $sBwtIndexPrefix;
-		$hConfig{'bowtie_build'}{'BOWTIE_INDEX_PREFIX'}[1] = "bowtie index prefix";
+		$hConfig{'bowtie2_build'}{'BOWTIE2_INDEX_PREFIX'}[0] = $sBwtIndexPrefix;
+		$hConfig{'bowtie2_build'}{'BOWTIE2_INDEX_PREFIX'}[1] = "bowtie2 index prefix";
 	}
 	
 	###	Add Bowtie Build Component & Parameters ###
 	init_component($oPL, "serial");
-		include_component_layout($oPL, $sTemplateDir, "bowtie_build", "reference");
+		include_component_layout($oPL, $sTemplateDir, "bowtie2_build", "reference");
 	complete_component($oPL);
 	
 	%hParams = ();
 	$hParams{'INPUT_FILE'} = ["$hCmdLineOption{'reffile'}", "path to reference FastA file"];
-	config2params(\%hParams, \%hConfig, 'bowtie_build');
-	add_config_section($fpPC, "bowtie_build", "reference");
+	config2params(\%hParams, \%hConfig, 'bowtie2_build');
+	add_config_section($fpPC, "bowtie2_build", "reference");
 	add_config_parameters($fpPC, \%hParams);
 	
-	$sBwtIndexDir = '$;REPOSITORY_ROOT$;/output_repository/bowtie_build/$;PIPELINEID$;_reference/i1/g1';
+	$sBwtIndexDir = '$;REPOSITORY_ROOT$;/output_repository/bowtie2_build/$;PIPELINEID$;_reference/i1/g1';
 }
+
+########Bowtie Build Index############
+#######################################
+
+if (defined $hCmdLineOption{'bowtie_build'}) {
+    die "Error! Reference FastA file undefined !!!\n" if (!(defined $hCmdLineOption{'reffile'}));
+    if (defined ($hConfig{'bowtie_build'}{'BOWTIE_INDEX_PREFIX'})) {
+        $sBwtIndexPrefix = $hConfig{'bowtie_build'}{'BOWTIE_INDEX_PREFIX'}[0];
+    } else {
+         ($_, $_, $sBwtIndexPrefix) = File::Spec->splitpath($hCmdLineOption{'reffile'});
+         $sBwt2IndexPrefix =~ s/.(\w+)$//;
+         $hConfig{'bowtie_build'}{'BOWTIE_INDEX_PREFIX'}[0] = $sBwtIndexPrefix;
+         $hConfig{'bowtie_build'}{'BOWTIE_INDEX_PREFIX'}[1] = "bowtie index prefix"
+        }
+     init_component($oPL, "serial");
+     include_component_layout($oPL, $sTemplateDir, "bowtie_build", "reference");
+     complete_component($oPL);
+     %hParams = ();
+     $hParams{'INPUT_FILE'} = ["$hCmdLineOption{'reffile'}", "path to reference FastA file"];
+     config2params(\%hParams, \%hConfig, 'bowtie_build');
+     add_config_section($fpPC, "bowtie_build", "reference");
+     add_config_parameters($fpPC, \%hParams);
+     $sBwtIndexDir = '$;REPOSITORY_ROOT$;/output_repository/bowtie_build/$;PIPELINEID$;_reference/i1/g1';
+}
+
+
 
 if (defined $hCmdLineOption{'quality_stats'}) {
 	###	Add FastX Quality Stats Component ###
@@ -624,7 +660,7 @@ if (defined $hCmdLineOption{'reffile'}) {
 	$sSamRefFile = '$;REPOSITORY_ROOT$;/output_repository/samtools_reference_index/$;PIPELINEID$;_reference/i1/g1/'.$sSamRefFile;
 }
 
-if (defined $hCmdLineOption{'alignment'}) {
+if (defined $hCmdLineOption{'alignment'}){
 	init_component($oPL, "serial");
 	
 	if ($bPE) {
@@ -643,9 +679,9 @@ if (defined $hCmdLineOption{'alignment'}) {
 	else {
 		$sListFile = $sList1File;
 	}
-	
+ #   if(!(defined $hCmdLineOption{'bowtie2_aln'})){	
 	if ((!(defined $sBwtIndexDir)) || (!(defined $sBwtIndexPrefix))) {
-		die "Error! Bowtie Index undefined !!!\n" if (!(defined $hCmdLineOption{'idxfile'}));
+		die "Error! Bowtie2 Index undefined !!!\n" if (!(defined $hCmdLineOption{'idxfile'}));
 		
 		($_, $sBwtIndexDir, $sBwtIndexPrefix) = File::Spec->splitpath($hCmdLineOption{'idxfile'});
 	}
@@ -653,7 +689,7 @@ if (defined $hCmdLineOption{'alignment'}) {
 	###	Add FastQC Stats and Bowtie Components ###
 	init_component($oPL, "parallel");
 		include_component_layout($oPL, $sTemplateDir, "fastqc_stats", "fastqc");
-		include_component_layout($oPL, $sTemplateDir, "bowtie", "alignment");
+		include_component_layout($oPL, $sTemplateDir, "bowtie2", "alignment");
 	complete_component($oPL);
 	
 	###	Add FastQC Stats Parameters ###
@@ -665,26 +701,26 @@ if (defined $hCmdLineOption{'alignment'}) {
 	###	Add Bowtie Parameters ###
 	%hParams = ();
 	$hParams{'INPUT_FILE_LIST'} = ["$sListFile", "path to list file consisting of tab separated first mate and second mate sequence files"];
-	$hParams{'BOWTIE_INDEX_DIR'} = ["$sBwtIndexDir", "path to bowtie package binary directory"];
-	$hParams{'BOWTIE_INDEX_PREFIX'} = ["$sBwtIndexPrefix", "bowtie index prefix"];
+	$hParams{'BOWTIE2_INDEX_DIR'} = ["$sBwtIndexDir", "path to bowtie2 package binary directory"];
+	$hParams{'BOWTIE2_INDEX_PREFIX'} = ["$sBwtIndexPrefix", "bowtie2 index prefix"];
 	
 	$sArgs = "";
-	$sArgs = $hConfig{'bowtie'}{'OTHER_PARAMETERS'}[0] if (defined $hConfig{'bowtie'}{'OTHER_PARAMETERS'});
+	$sArgs = $hConfig{'bowtie2'}{'OTHER_PARAMETERS'}[0] if (defined $hConfig{'bowtie2'}{'OTHER_PARAMETERS'});
 	$sArgs .= " --sam" if (($sArgs !~ m/--sam/));
 	$sArgs .= " --solexa1.3-quals" if (($hCmdLineOption{'quality'} == 64) && ($sArgs !~ m/--solexa1.3-quals/));
-	$hConfig{'bowtie'}{'OTHER_PARAMETERS'}[0] = $sArgs;
-	$hConfig{'bowtie'}{'OTHER_PARAMETERS'}[1] = "Additional Parameters" if (! defined $hConfig{'bowtie'}{'OTHER_PARAMETERS'});
+	$hConfig{'bowtie2'}{'OTHER_PARAMETERS'}[0] = $sArgs;
+	$hConfig{'bowtie2'}{'OTHER_PARAMETERS'}[1] = "Additional Parameters" if (! defined $hConfig{'bowtie2'}{'OTHER_PARAMETERS'});
 	
 	$sArgs  = "";
-	$sArgs = $hConfig{'bowtie'}{'OTHER_ARGS'}[0] if (defined $hConfig{'bowtie'}{'OTHER_ARGS'});
+	$sArgs = $hConfig{'bowtie2'}{'OTHER_ARGS'}[0] if (defined $hConfig{'bowtie2'}{'OTHER_ARGS'});
 	$sArgs .= " --gzip" if (($bGZ) && ($sArgs !~ m/--gzip/));
-	$hConfig{'bowtie'}{'OTHER_ARGS'}[0] = $sArgs;
-	$hConfig{'bowtie'}{'OTHER_ARGS'}[1] = "Additional Arguments" if (! defined $hConfig{'bowtie'}{'OTHER_ARGS'});
-	config2params(\%hParams, \%hConfig, 'bowtie');
-	add_config_section($fpPC, "bowtie", "alignment");
+	$hConfig{'bowtie2'}{'OTHER_ARGS'}[0] = $sArgs;
+	$hConfig{'bowtie2'}{'OTHER_ARGS'}[1] = "Additional Arguments" if (! defined $hConfig{'bowtie2'}{'OTHER_ARGS'});
+	config2params(\%hParams, \%hConfig, 'bowtie2');
+	add_config_section($fpPC, "bowtie2", "alignment");
 	add_config_parameters($fpPC, \%hParams);
 	
-	$sListFile = '$;REPOSITORY_ROOT$;/output_repository/bowtie/$;PIPELINEID$;_alignment/bowtie.bam.list';
+	$sListFile = '$;REPOSITORY_ROOT$;/output_repository/bowtie2/$;PIPELINEID$;_alignment/bowtie2.bam.list';
 	
 	complete_component($oPL);
 	
@@ -752,7 +788,112 @@ if (defined $hCmdLineOption{'alignment'}) {
 	}
 	
 	complete_component($oPL);
+#}
 }
+
+#########Bowtie_Alignment############
+#######################################
+
+if (defined $hCmdLineOption{'bowtie_aln'}) {
+    init_component($oPL, "serial");
+    $bPE= TRUE;
+    if ($bPE) {
+        include_component_layout($oPL, $sTemplateDir, "create_paired_list_file", "list");
+
+        %hParams = ();
+        $hParams{'LIST_FILE_1'} = ["$sList1File", "path to list file of input file 1s"];
+        $hParams{'LIST_FILE_2'} = ["$sList2File", "path to list file of input file 2s"];
+        $hParams{'SAMPLE_INFO'} = ["$hCmdLineOption{'sample_file'}", "path to sample info file with information on all samples to be analyzed"] if (defined $hCmdLineOption{'quality_trimming'});
+        add_config_section($fpPC, "create_paired_list_file", "list");
+        add_config_parameters($fpPC, \%hParams);
+
+        $sListFile = '$;REPOSITORY_ROOT$;/output_repository/create_paired_list_file/$;PIPELINEID$;_list/paired_input_file.list';
+    }
+    else {
+        $sListFile = $sList1File;
+    }
+
+    if ((!(defined $sBwtIndexDir)) || (!(defined $sBwtIndexPrefix))) {
+        die "Error! Bowtie Index undefined !!!\n" if (!(defined $hCmdLineOption{'idxfile'}));
+
+        ($_, $sBwtIndexDir, $sBwtIndexPrefix) = File::Spec->splitpath($hCmdLineOption{'idxfile'});
+        }
+    init_component($oPL, "parallel");
+    include_component_layout($oPL, $sTemplateDir, "bowtie", "alignment");
+    complete_component($oPL);
+    %hParams = ();
+    $hParams{'INPUT_FILE_LIST'} = ["$sListFile", "path to list file consisting of tab separated first mate and second mate sequence files"];
+    $hParams{'BOWTIE_INDEX_DIR'} = ["$sBwtIndexDir", "path to bowtie2 package binary directory"];
+    $hParams{'BOWTIE_INDEX_PREFIX'} = ["$sBwtIndexPrefix", "bowtie2 index prefix"];
+    $sArgs = "";
+    $sArgs = $hConfig{'bowtie'}{'OTHER_PARAMETERS'}[0] if (defined $hConfig{'bowtie'}{'OTHER_PARAMETERS'});
+
+    config2params(\%hParams, \%hConfig, 'bowtie');
+    add_config_section($fpPC, "bowtie", "alignment");
+    add_config_parameters($fpPC, \%hParams);
+
+    $sListFile = '$;REPOSITORY_ROOT$;/output_repository/bowtie/$;PIPELINEID$;_alignment/bowtie.bam.list';
+    complete_component($oPL);
+    init_component($oPL, "serial");
+
+    init_component($oPL, "parallel");
+        include_component_layout($oPL, $sTemplateDir, "samtools_file_convert", "sorted_position");
+        include_component_layout($oPL, $sTemplateDir, "samtools_file_convert", "sorted_name");
+    complete_component($oPL);
+
+    %hParams = ();
+    $hParams{'INPUT_FILE_LIST'} = ["$sListFile", "path to list of alignment files"];
+    $hParams{'INPUT_FILE_FORMAT'} = ["BAM", "input alignment file format (BAM or SAM)"];
+    $nOpt = "12";
+    $hParams{'OPTIONS'} = ["$nOpt", "string of options for file conversion (eg : 123). 1 - BAM to sorted BAM, 2 - sorted BAM to indexed BAM, 3 - BAM to SAM, and 4 - SAM to BAM"];
+    add_config_section($fpPC, "samtools_file_convert", "sorted_position");
+    add_config_parameters($fpPC, \%hParams);
+
+    $sBamFileList = '$;REPOSITORY_ROOT$;/output_repository/samtools_file_convert/$;PIPELINEID$;_sorted_position/samtools_file_convert.sorted_by_position_bam.list';
+
+    %hParams = ();
+    $hParams{'INPUT_FILE_LIST'} = ["$sListFile", "path to list of alignment files"];
+    $hParams{'INPUT_FILE_FORMAT'} = ["BAM", "input alignment file format (BAM or SAM)"];
+    $hParams{'SAMTOOLS_SORT_PARAMETERS'} = ["-n", "samtools sort parameters"];
+    $nOpt = "13";
+    $hParams{'OPTIONS'} = ["$nOpt", "string of options for file conversion (eg : 123). 1 - BAM to sorted BAM, 2 - sorted BAM to indexed BAM, 3 - BAM to SAM, and 4 - SAM to BAM"];
+    add_config_section($fpPC, "samtools_file_convert", "sorted_name");
+    add_config_parameters($fpPC, \%hParams);
+
+    $sSamFileList = '$;REPOSITORY_ROOT$;/output_repository/samtools_file_convert/$;PIPELINEID$;_sorted_name/samtools_file_convert.sorted_by_name_sam.list';
+    $sBamNameSortList = '$;REPOSITORY_ROOT$;/output_repository/samtools_file_convert/$;PIPELINEID$;_sorted_name/samtools_file_convert.sorted_by_name_bam.list';
+
+    include_component_layout($oPL, $sTemplateDir, "samtools_alignment_stats", "alignment_stats");
+
+    %hParams = ();
+    $hParams{'INPUT_FILE_LIST'} = ["$sBamFileList", "path to list of alignment BAM files"];
+    add_config_section($fpPC, "samtools_alignment_stats", "alignment_stats");
+    add_config_parameters($fpPC, \%hParams);
+
+    $sMapStatsList = '$;REPOSITORY_ROOT$;/output_repository/samtools_alignment_stats/$;PIPELINEID$;_alignment_stats/samtools_alignment_stats.mapstats.list';
+
+    #include_component_layout($oPL, $sTemplateDir, "align_bowtie_stats", "bowtie_stats");
+    #add_config_parameters($fpPC, \%hParams);
+
+    if ((defined $hCmdLineOption{'gtffile'}) && (defined $hCmdLineOption{'annotation_format'}) ) {
+    include_component_layout($oPL, $sTemplateDir, "percent_mapped_stats", "percent_mapped");
+        %hParams = ();
+        $hParams{'INPUT_FILE_LIST'} = ["$sBamNameSortList", "path to list of alignment BAM files"];
+        $hParams{'REFERENCE_FASTA'} = ["$sSamRefFile", "path to reference FastA file"];
+        $hParams{'ANNOTATION_FILE'} = ["$hCmdLineOption{'gtffile'}", "path to annotation file (BED or GTF or GFF3 format file)"];
+        $hParams{'ANNO_FORMAT'} = ["$hCmdLineOption{'annotation_format'}", "annotation file format (bed/gtf/gff3)"];
+        $hParams{'ORG_TYPE'} = ["euk", "Organism type (prok/euk)"];
+
+        config2params(\%hParams, \%hConfig, 'percent_mapped_stats');
+        add_config_section($fpPC, "percent_mapped_stats", "percent_mapped");
+        add_config_parameters($fpPC, \%hParams);
+
+    }
+    complete_component($oPL);
+}
+
+
+
 
 if ( (defined $hCmdLineOption{'diff_gene_expr'}) || (defined $hCmdLineOption{'visualization'}) || (defined $hCmdLineOption{'rpkm_analysis'}) ) {
 	init_component($oPL, "parallel");
@@ -961,7 +1102,7 @@ if (defined $hCmdLineOption{'diff_gene_expr'}) {
 	init_component($oPL,"parallel");
             include_component_layout($oPL, $sTemplateDir, "filter_deseq", "filter_de");
 	        include_component_layout($oPL, $sTemplateDir, "filter_edgeR", "filter_eR");
-	        include_component_layout($oPL, $sTemplateDir, "expression_plots", "deseq");            
+	        #include_component_layout($oPL, $sTemplateDir, "expression_plots", "deseq");            
 
 	        ##Add Deseq Filter component.
 	        $Deseq_List = '$;REPOSITORY_ROOT$;/output_repository/deseq/$;PIPELINEID$;_differential_expression/deseq.table.list';
@@ -980,11 +1121,11 @@ if (defined $hCmdLineOption{'diff_gene_expr'}) {
 	        add_config_parameters($fpPC, \%hParams);
 
           ##Add expression plot
-            %hParams = ();
-	        $hParams{'INPUT_FILE'} = [$Deseq_List,"path to output list file of deseq"];
-	        config2params(\%hParams, \%hConfig, 'expression_plots');
-	        add_config_section($fpPC, "expression_plots", "deseq");
-	        add_config_parameters($fpPC, \%hParams);
+            #%hParams = ();
+	        #$hParams{'INPUT_FILE'} = [$Deseq_List,"path to output list file of deseq"];
+	        #config2params(\%hParams, \%hConfig, 'expression_plots');
+	        #add_config_section($fpPC, "expression_plots", "deseq");
+	        #add_config_parameters($fpPC, \%hParams);
 
           complete_component($oPL);
 

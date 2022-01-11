@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 01/11/2022
+* Added bowtie2 component, changes made to bin/ docs/ and pipeline templates
+* Changes to run on Rhel8 to config file and shell scripts in bin/
+* Removed expression plot component
+* Replace deseq with deseq2
+* Edits to the create scripts to accomodate changes. 
+* Edits to prok config file to add components
+* Additional bug fixes as reported on hisat component
+
 ## 03/29/18
 * Moved samtools bin from /usr/src/samtools to /opt/packages/samtools to keep all package locations consistent
 * Moved fastqc bin from /usr/bin/ to /opt/packages/fastqc since FastQC will be installed by source instead of by apt-get install
